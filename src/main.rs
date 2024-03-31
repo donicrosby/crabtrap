@@ -1,5 +1,5 @@
 use clap::Parser;
-use crabtrap::{ContentType, CrabTrapConfig, CrabTrapServer, TarpitConfig};
+use crabtrap::{ContentType, CrabTrapConfig, CrabTrapServer, TarpitConfig, TarpitWriter};
 use std::error::Error;
 use std::net::IpAddr;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -56,7 +56,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             args.content_type,
         ),
     );
+    let writer = TarpitWriter::new(config.tarpit_config().tick_duration(), config.tarpit_config().duration_per_byte());
     let server = CrabTrapServer::new(config);
-    server.run().await?;
+    
+    server.run(writer).await?;
     Ok(())
 }

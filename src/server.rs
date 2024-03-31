@@ -1,4 +1,4 @@
-use crate::{tarpit_impl, CrabTrapConfig, TarPit, TarPitMetadataCollector, TarpitWriter};
+use crate::{tarpit_impl, CrabTrapConfig, StreamingBytesWriter, TarPit, TarPitMetadataCollector};
 use hyper::service;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
@@ -24,7 +24,10 @@ impl Server {
         Self { config }
     }
 
-    pub async fn run(&self) -> Result<(), Error> {
+    pub async fn run<W: StreamingBytesWriter + Send + 'static>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), Error> {
         info!("Starting Crab Trap Tarpit...");
         let listener = TcpListener::bind(self.config.bind_addr()).await?;
         info!("Listening on: {}", self.config.bind_addr());
@@ -35,12 +38,9 @@ impl Server {
             self.config.tarpit_config().content_type(),
         );
         let (conn_send, conn_recv) = mpsc::unbounded_channel();
-        let mut writer = TarpitWriter::new(
-            self.config.tarpit_config().tick_duration(),
-            self.config.tarpit_config().duration_per_byte(),
-            conn_recv,
-        );
-        let _writer_handle = tokio::task::spawn(async move { writer.process_connections().await });
+
+        let _writer_handle =
+            tokio::task::spawn(async move { writer.process_connections(conn_recv).await });
 
         loop {
             let (stream, rmt_addr) = listener.accept().await?;

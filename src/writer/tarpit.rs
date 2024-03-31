@@ -1,10 +1,10 @@
-use crate::{TarPitMetadata, TarpitConnection};
+use super::{StreamingBytesWriter, TarpitConnRecv};
+use crate::{ClientMetadata, ConnectionMetadata, TarpitConnection};
 use hyper::body::Bytes;
 use rand::distributions::Alphanumeric;
 use rand::prelude::*;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::{
     sync::Mutex,
     time::{self, Duration},
@@ -12,23 +12,34 @@ use tokio::{
 use tokio_stream::{self as stream, StreamExt};
 use tracing::{debug, info, trace, warn};
 
-pub(crate) type TarpitConnRecv = UnboundedReceiver<TarpitConnection>;
-pub(crate) type TarpitConnSend = UnboundedSender<TarpitConnection>;
-
-pub(crate) struct TarpitWriter {
+pub struct TarpitWriter {
     connections: Arc<Mutex<VecDeque<TarpitConnection>>>,
     time_per_byte: Duration,
     tick_period: Duration,
-    conn_recv: TarpitConnRecv,
+}
+
+#[async_trait::async_trait]
+impl StreamingBytesWriter for TarpitWriter {
+    async fn process_connections(&mut self, mut conn_recv: TarpitConnRecv) {
+        let mut time_slice = time::interval(self.tick_period);
+        loop {
+            time_slice.tick().await;
+            trace!("Writer waking up from sleep...");
+            self.process_connections_inner(&mut conn_recv).await
+        }
+    }
+    async fn get_connections(&self) -> Vec<ConnectionMetadata> {
+        let metadata = self.connections.lock().await.iter().map(|c| c.metadata().clone()).collect();
+        metadata
+    }
 }
 
 impl TarpitWriter {
-    pub fn new(tick_period: Duration, time_per_byte: Duration, conn_recv: TarpitConnRecv) -> Self {
+    pub fn new(tick_period: Duration, time_per_byte: Duration) -> Self {
         Self {
             connections: Arc::new(Mutex::new(VecDeque::new())),
             time_per_byte,
             tick_period,
-            conn_recv,
         }
     }
 
@@ -47,8 +58,8 @@ impl TarpitWriter {
         }
     }
 
-    async fn process_connections_inner(&mut self) {
-        let new_conns = self.get_new_connections().await;
+    async fn process_connections_inner(&mut self, conn_recv: &mut TarpitConnRecv) {
+        let new_conns = self.get_new_connections(conn_recv).await;
         let mut conns = self.connections.lock().await;
         if let Some(new_conns) = new_conns {
             conns.append(&mut new_conns.into())
@@ -89,7 +100,7 @@ impl TarpitWriter {
         conns.append(&mut processed_connections);
     }
 
-    fn display_connection_info(metadata: &TarPitMetadata) {
+    fn display_connection_info(metadata: &ClientMetadata) {
         let host = metadata.host();
         let user_agent = metadata.user_agent_string();
         let path = metadata.location();
@@ -101,11 +112,14 @@ impl TarpitWriter {
         );
     }
 
-    async fn get_new_connections(&mut self) -> Option<Vec<TarpitConnection>> {
+    async fn get_new_connections(
+        &mut self,
+        conn_recv: &mut TarpitConnRecv,
+    ) -> Option<Vec<TarpitConnection>> {
         trace!("Writer looking for new connections...");
         let mut conns = Vec::new();
-        while !self.conn_recv.is_empty() {
-            if let Some(conn) = self.conn_recv.recv().await {
+        while !conn_recv.is_empty() {
+            if let Some(conn) = conn_recv.recv().await {
                 debug!("Found connection...");
                 Self::display_connection_info(conn.get_conn_metadata());
                 conns.push(conn)
@@ -118,12 +132,5 @@ impl TarpitWriter {
         }
     }
 
-    pub async fn process_connections(&mut self) {
-        let mut time_slice = time::interval(self.tick_period);
-        loop {
-            time_slice.tick().await;
-            trace!("Writer waking up from sleep...");
-            self.process_connections_inner().await
-        }
-    }
+    pub async fn process_connections(&mut self) {}
 }

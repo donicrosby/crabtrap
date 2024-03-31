@@ -10,24 +10,9 @@ use rand::prelude::*;
 use std::convert::Infallible;
 use std::str::FromStr;
 use std::sync::Arc;
-use thiserror::Error;
+
+use super::{ClientMetadata, Error, TarpitConnection, TarpitRecv};
 use tokio::sync::{mpsc, Mutex as TokioMutex};
-use tokio::time::{Duration, Instant};
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("hyper error")]
-    Hyper(#[from] hyper::Error),
-
-    #[error("http error")]
-    Http(#[from] hyper::http::Error),
-
-    #[error("channel error")]
-    Channel(#[from] mpsc::error::SendError<Bytes>),
-
-    #[error("content type parse")]
-    ContentTypeParse(#[from] mime::FromStrError),
-}
 
 pub(crate) async fn tarpit_impl(
     req: Request<Incoming>,
@@ -48,59 +33,6 @@ pub(crate) async fn tarpit_impl(
     let body = StreamBody::new(body_stream.map_ok(Frame::data));
     let resp = resp.body(body)?;
     Ok(resp)
-}
-
-pub(crate) type TarpitSender = mpsc::UnboundedSender<Bytes>;
-pub(crate) type TarpitRecv = mpsc::UnboundedReceiver<Bytes>;
-
-#[derive(Debug, Clone)]
-pub(crate) struct TarpitConnection {
-    bytes_sent: u64,
-    response_size: u64,
-    metadata: TarPitMetadata,
-    time_since_last_byte: Option<Instant>,
-    channel: TarpitSender,
-}
-
-impl TarpitConnection {
-    pub fn new(response_size: u64, metadata: TarPitMetadata, channel: TarpitSender) -> Self {
-        Self {
-            bytes_sent: 0,
-            time_since_last_byte: None,
-            metadata,
-            response_size,
-            channel,
-        }
-    }
-
-    pub fn get_conn_metadata(&self) -> &TarPitMetadata {
-        &self.metadata
-    }
-
-    pub fn should_send_byte(&mut self, duration_per_byte: Duration) -> bool {
-        if let Some(time_since) = self.time_since_last_byte {
-            time_since.elapsed() >= duration_per_byte
-        } else {
-            true
-        }
-    }
-
-    pub fn send_byte(&mut self, payload: Bytes) -> Result<(), Error> {
-        self.channel.send(payload)?;
-        self.time_since_last_byte = Some(Instant::now());
-        self.sent_byte();
-        Ok(())
-    }
-
-    pub fn sent_byte(&mut self) {
-        self.bytes_sent += 1;
-    }
-
-    pub fn should_abort(&self) -> bool {
-        let payload_complete = self.bytes_sent >= self.response_size;
-        let chann_closed = self.channel.is_closed();
-        chann_closed || payload_complete
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -148,55 +80,6 @@ impl TarpitPayload {
             content_type,
             payload_size,
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TarPitMetadata {
-    host: Option<String>,
-    user_agent_string: Option<String>,
-    location: String,
-    query: Option<String>,
-    method: String,
-}
-
-impl TarPitMetadata {
-    pub fn new(
-        host: Option<String>,
-        user_agent_string: Option<String>,
-        method: String,
-        location: String,
-        query: Option<String>,
-    ) -> Self {
-        Self {
-            host,
-            user_agent_string,
-            location,
-            query,
-            method,
-        }
-    }
-
-    pub fn host(&self) -> String {
-        self.host.clone().unwrap_or(String::from("N/A"))
-    }
-
-    pub fn user_agent_string(&self) -> String {
-        self.user_agent_string
-            .clone()
-            .unwrap_or(String::from("N/A"))
-    }
-
-    pub fn location(&self) -> String {
-        self.location.clone()
-    }
-
-    pub fn query(&self) -> String {
-        self.query.clone().unwrap_or(String::from("None"))
-    }
-
-    pub fn method(&self) -> String {
-        self.method.clone()
     }
 }
 
@@ -252,7 +135,7 @@ where
         let location = String::from(req.uri().path());
         let query = req.uri().query().map(String::from);
         let method = req.method().to_string();
-        let metadata = TarPitMetadata::new(host, user_agent_string, method, location, query);
+        let metadata = ClientMetadata::new(host, user_agent_string, method, location, query);
         let mut new_req = req;
         new_req.extensions_mut().insert(metadata);
         self.inner.call(new_req)
@@ -300,7 +183,7 @@ where
         let payload_size = rng.gen_range(self.min_response_size..=self.max_response_size);
         let (send, recv) = mpsc::unbounded_channel();
         let payload = TarpitPayload::new(recv, self.content_type.clone(), payload_size);
-        let metadata = req.extensions().get::<TarPitMetadata>().unwrap();
+        let metadata = req.extensions().get::<ClientMetadata>().unwrap();
         let connection = TarpitConnection::new(payload_size, metadata.clone(), send);
         self.send_conn
             .send(connection.clone())
