@@ -1,4 +1,4 @@
-use crate::{tarpit_impl, CrabTrapConfig, TarPit, TarpitWriter};
+use crate::{tarpit_impl, CrabTrapConfig, TarPit, TarPitMetadataCollector, TarpitWriter};
 use hyper::service;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
@@ -60,6 +60,9 @@ impl Server {
                             svc,
                         )
                     })
+                    .service(svc);
+                let svc = ServiceBuilder::new()
+                    .layer_fn(TarPitMetadataCollector::new)
                     .service(svc);
                 if let Err(err) = auto::Builder::new(TokioExecutor::new())
                     .serve_connection(io, svc)

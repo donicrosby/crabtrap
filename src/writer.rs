@@ -1,4 +1,4 @@
-use crate::TarpitConnection;
+use crate::{TarPitMetadata, TarpitConnection};
 use hyper::body::Bytes;
 use rand::distributions::Alphanumeric;
 use rand::prelude::*;
@@ -89,12 +89,24 @@ impl TarpitWriter {
         conns.append(&mut processed_connections);
     }
 
+    fn display_connection_info(metadata: &TarPitMetadata) {
+        let host = metadata.host();
+        let user_agent = metadata.user_agent_string();
+        let path = metadata.location();
+        let query = metadata.query();
+        info!(
+            "Connection: {{ Host: {}, User Agent: {}, Path: {}, Query: {} }}",
+            host, user_agent, path, query
+        );
+    }
+
     async fn get_new_connections(&mut self) -> Option<Vec<TarpitConnection>> {
         trace!("Writer looking for new connections...");
         let mut conns = Vec::new();
         while !self.conn_recv.is_empty() {
             if let Some(conn) = self.conn_recv.recv().await {
                 debug!("Found connection...");
+                Self::display_connection_info(conn.get_conn_metadata());
                 conns.push(conn)
             }
         }

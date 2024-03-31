@@ -2,8 +2,9 @@ use crate::TarpitConnSend;
 use futures::stream::{self, Stream, TryStreamExt};
 use http_body_util::StreamBody;
 use hyper::body::{Bytes, Frame, Incoming};
+use hyper::header::{self, HeaderMap, HeaderName};
 use hyper::service::Service;
-use hyper::{Request, Response};
+use hyper::{Request, Response, Uri};
 use mime::{self, Mime};
 use rand::prelude::*;
 use std::convert::Infallible;
@@ -33,8 +34,8 @@ pub(crate) async fn tarpit_impl(
 ) -> Result<Response<StreamBody<impl Stream<Item = Result<Frame<Bytes>, Infallible>>>>, Error> {
     let payload = req.extensions().get::<TarpitPayload>().unwrap().to_owned();
     let resp = Response::builder()
-        .header("Content-Type", payload.content_type.to_string())
-        .header("Content-Length", payload.payload_size);
+        .header(header::CONTENT_TYPE, payload.content_type.to_string())
+        .header(header::CONTENT_LENGTH, payload.payload_size);
     let body_stream = stream::unfold(payload, move |payload| async move {
         payload
             .channel
@@ -56,18 +57,24 @@ pub(crate) type TarpitRecv = mpsc::UnboundedReceiver<Bytes>;
 pub(crate) struct TarpitConnection {
     bytes_sent: u64,
     response_size: u64,
+    metadata: TarPitMetadata,
     time_since_last_byte: Option<Instant>,
     channel: TarpitSender,
 }
 
 impl TarpitConnection {
-    pub fn new(response_size: u64, channel: TarpitSender) -> Self {
+    pub fn new(response_size: u64, metadata: TarPitMetadata, channel: TarpitSender) -> Self {
         Self {
             bytes_sent: 0,
             time_since_last_byte: None,
+            metadata,
             response_size,
             channel,
         }
+    }
+
+    pub fn get_conn_metadata(&self) -> &TarPitMetadata {
+        &self.metadata
     }
 
     pub fn should_send_byte(&mut self, duration_per_byte: Duration) -> bool {
@@ -145,6 +152,106 @@ impl TarpitPayload {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct TarPitMetadata {
+    host: Option<String>,
+    user_agent_string: Option<String>,
+    location: Option<String>,
+    query: Option<String>,
+}
+
+impl TarPitMetadata {
+    pub fn new(
+        host: Option<String>,
+        user_agent_string: Option<String>,
+        location: Option<String>,
+        query: Option<String>,
+    ) -> Self {
+        Self {
+            host,
+            user_agent_string,
+            location,
+            query,
+        }
+    }
+
+    pub fn host(&self) -> String {
+        self.host.clone().unwrap_or(String::from("N/A"))
+    }
+
+    pub fn user_agent_string(&self) -> String {
+        self.user_agent_string
+            .clone()
+            .unwrap_or(String::from("N/A"))
+    }
+
+    pub fn location(&self) -> String {
+        self.location.clone().unwrap_or(String::from("None"))
+    }
+
+    pub fn query(&self) -> String {
+        self.query.clone().unwrap_or(String::from("None"))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TarPitMetadataCollector<S> {
+    inner: S,
+}
+
+impl<S> TarPitMetadataCollector<S> {
+    pub fn new(inner: S) -> Self {
+        Self { inner }
+    }
+
+    fn get_header(headers: &HeaderMap, header: HeaderName) -> Option<String> {
+        headers
+            .get(header)
+            .and_then(|h| h.to_str().ok())
+            .map(String::from)
+    }
+}
+
+impl<S> Service<Req> for TarPitMetadataCollector<S>
+where
+    S: Service<Req>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn call(&self, req: Req) -> Self::Future {
+        let uri_host = req.uri().host().map(String::from);
+        let host_header = req
+            .headers()
+            .get(header::HOST)
+            .map(|header| header.to_str().ok())
+            .and_then(|host_header| {
+                if let Some(host_header) = host_header {
+                    Uri::builder()
+                        .authority(host_header)
+                        .build()
+                        .map_or(None, |uri| uri.host().map(String::from))
+                } else {
+                    None
+                }
+            });
+
+        let host = if uri_host.is_some() {
+            uri_host
+        } else {
+            host_header
+        };
+        let user_agent_string = Self::get_header(req.headers(), header::USER_AGENT);
+        let location = Some(String::from(req.uri().path()));
+        let query = req.uri().query().map(String::from);
+        let metadata = TarPitMetadata::new(host, user_agent_string, location, query);
+        let mut new_req = req;
+        new_req.extensions_mut().insert(metadata);
+        self.inner.call(new_req)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct TarPit<S> {
     send_conn: TarpitConnSend,
     content_type: ContentType,
@@ -185,13 +292,13 @@ where
         let payload_size = rng.gen_range(self.min_response_size..=self.max_response_size);
         let (send, recv) = mpsc::unbounded_channel();
         let payload = TarpitPayload::new(recv, self.content_type.clone(), payload_size);
-        let connection = TarpitConnection::new(payload_size, send);
+        let metadata = req.extensions().get::<TarPitMetadata>().unwrap();
+        let connection = TarpitConnection::new(payload_size, metadata.clone(), send);
         self.send_conn
             .send(connection.clone())
             .expect("could not send connection to writer");
-        let (mut parts, body) = req.into_parts();
-        parts.extensions.insert(payload);
-        let new_req = Req::from_parts(parts, body);
+        let mut new_req = req;
+        new_req.extensions_mut().insert(payload);
         self.inner.call(new_req)
     }
 }
