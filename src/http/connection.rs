@@ -115,7 +115,7 @@ impl TarpitConnection {
     }
 
     pub fn get_conn_metadata(&self) -> &ClientMetadata {
-        &self.metadata.client_metadata()
+        self.metadata.client_metadata()
     }
 
     pub fn should_send_byte(&mut self, duration_per_byte: Duration) -> bool {

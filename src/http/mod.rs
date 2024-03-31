@@ -3,13 +3,13 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 mod connection;
-mod http;
+mod service;
 
 pub(crate) use self::connection::{
     ClientMetadata, ConnectionMetadata, TarpitConnection,
 };
-pub use self::http::ContentType;
-pub(crate) use self::http::{tarpit_impl, TarPit, TarPitMetadataCollector};
+pub use self::service::ContentType;
+pub(crate) use self::service::{tarpit_impl, TarPit, TarPitMetadataCollector};
 
 pub(crate) type TarpitSender = mpsc::UnboundedSender<Bytes>;
 pub(crate) type TarpitRecv = mpsc::UnboundedReceiver<Bytes>;
