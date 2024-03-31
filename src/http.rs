@@ -157,7 +157,7 @@ pub(crate) struct TarPitMetadata {
     user_agent_string: Option<String>,
     location: String,
     query: Option<String>,
-    method: String
+    method: String,
 }
 
 impl TarPitMetadata {
@@ -173,7 +173,7 @@ impl TarPitMetadata {
             user_agent_string,
             location,
             query,
-            method
+            method,
         }
     }
 

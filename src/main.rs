@@ -2,6 +2,7 @@ use clap::Parser;
 use crabtrap::{ContentType, CrabTrapConfig, CrabTrapServer, TarpitConfig};
 use std::error::Error;
 use std::net::IpAddr;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// Crab Trap Tarpit Server
 #[derive(Debug, Parser)]
@@ -40,7 +41,10 @@ struct Args {
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
 
     let config = CrabTrapConfig::new(
         (args.host, args.port),
