@@ -155,15 +155,17 @@ impl TarpitPayload {
 pub(crate) struct TarPitMetadata {
     host: Option<String>,
     user_agent_string: Option<String>,
-    location: Option<String>,
+    location: String,
     query: Option<String>,
+    method: String
 }
 
 impl TarPitMetadata {
     pub fn new(
         host: Option<String>,
         user_agent_string: Option<String>,
-        location: Option<String>,
+        method: String,
+        location: String,
         query: Option<String>,
     ) -> Self {
         Self {
@@ -171,6 +173,7 @@ impl TarPitMetadata {
             user_agent_string,
             location,
             query,
+            method
         }
     }
 
@@ -185,11 +188,15 @@ impl TarPitMetadata {
     }
 
     pub fn location(&self) -> String {
-        self.location.clone().unwrap_or(String::from("None"))
+        self.location.clone()
     }
 
     pub fn query(&self) -> String {
         self.query.clone().unwrap_or(String::from("None"))
+    }
+
+    pub fn method(&self) -> String {
+        self.method.clone()
     }
 }
 
@@ -242,9 +249,10 @@ where
             host_header
         };
         let user_agent_string = Self::get_header(req.headers(), header::USER_AGENT);
-        let location = Some(String::from(req.uri().path()));
+        let location = String::from(req.uri().path());
         let query = req.uri().query().map(String::from);
-        let metadata = TarPitMetadata::new(host, user_agent_string, location, query);
+        let method = req.method().to_string();
+        let metadata = TarPitMetadata::new(host, user_agent_string, method, location, query);
         let mut new_req = req;
         new_req.extensions_mut().insert(metadata);
         self.inner.call(new_req)

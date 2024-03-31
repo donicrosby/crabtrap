@@ -94,9 +94,10 @@ impl TarpitWriter {
         let user_agent = metadata.user_agent_string();
         let path = metadata.location();
         let query = metadata.query();
+        let method = metadata.method();
         info!(
-            "Connection: {{ Host: {}, User Agent: {}, Path: {}, Query: {} }}",
-            host, user_agent, path, query
+            "Connection: {{ Host: {}, User Agent: {}, Method: {}, Path: {}, Query: {} }}",
+            host, user_agent, method, path, query
         );
     }
 
