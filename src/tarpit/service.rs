@@ -94,7 +94,7 @@ impl<S> Tarpit<S> {
         if div > 0 {
             div
         } else if num_conns > 0 {
-            1
+            num_conns
         } else {
             0
         }
@@ -204,15 +204,16 @@ where
             .extensions_mut()
             .remove::<ClientMetadata>()
             .expect("no metadata given");
-        block_in_place(move || {
+        let (self_ret, req) = block_in_place(move || {
             Handle::current().block_on(async move {
                 let (conn, send) = TarpitConnection::new(response_size, client_metadata);
                 self.add_new_conn(conn).await;
                 let payload = TarpitRequest::new(send, self.config.content_type(), response_size);
                 let mut req = req;
                 req.extensions_mut().insert(payload);
-                self.inner.call(req)
+                (self, req)
             })
-        })
+        });
+        self_ret.inner.call(req)
     }
 }
