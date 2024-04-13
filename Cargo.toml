@@ -27,3 +27,7 @@ tokio-stream = "0.1"
 mime = "0.3.17"
 async-trait = "0.1"
 getset = "0.1"
+
+[dev-dependencies]
+tower-test = "0.4"
+tokio-test = "0.4"

@@ -1,6 +1,7 @@
-use crate::{ClientMetadata, Error, Req, TarpitConfig, TarpitConnection, TarpitRequest};
+use crate::{ClientMetadata, Error, TarpitConfig, TarpitConnection, TarpitRequest};
 use futures::stream::{self, TryStreamExt};
 use http_body_util::StreamBody;
+use hyper::body::Body;
 use hyper::body::{Bytes, Frame, Incoming};
 use hyper::header;
 use hyper::{Request, Response};
@@ -180,9 +181,10 @@ impl<S> Tarpit<S> {
     }
 }
 
-impl<S> Service<Req> for Tarpit<S>
+impl<S, B> Service<Request<B>> for Tarpit<S>
 where
-    S: Service<Req> + Clone,
+    S: Service<Request<B>> + Clone,
+    B: Body,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -195,7 +197,7 @@ where
         }
     }
 
-    fn call(&mut self, req: Req) -> Self::Future {
+    fn call(&mut self, req: Request<B>) -> Self::Future {
         let mut rng = rand::thread_rng();
         let response_size =
             rng.gen_range(self.config.min_body_size()..=self.config.max_body_size());

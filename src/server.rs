@@ -30,7 +30,7 @@ impl Server {
         info!("Starting Crab Trap Tarpit...");
         let listener = TcpListener::bind(self.config.bind_addr()).await?;
         info!("Listening on: {}", self.config.bind_addr());
-        
+
         // Create Tarpit Service
         let connection_svc = ServiceBuilder::new().service_fn(handle_tarpit_connection);
         let mut tarpit = Tarpit::new(connection_svc, self.config.tarpit_config().clone());
