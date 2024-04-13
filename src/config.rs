@@ -26,7 +26,7 @@ impl TarpitConfig {
             min_body_size,
             max_body_size,
             tick_duration: Duration::from_millis(tick_duration),
-            duration_per_byte: Duration::from_secs(duration_per_byte),
+            duration_per_byte: Duration::from_millis(duration_per_byte),
             content_type,
         }
     }
@@ -58,7 +58,7 @@ impl Default for TarpitConfig {
             min_body_size: 1048576,
             max_body_size: 10485760,
             tick_duration: Duration::from_millis(50),
-            duration_per_byte: Duration::from_secs(16),
+            duration_per_byte: Duration::from_millis(1600),
             content_type: ContentType::from(mime::TEXT_PLAIN),
         }
     }

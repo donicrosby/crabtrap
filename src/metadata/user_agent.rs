@@ -2,6 +2,8 @@ use crate::extract_header;
 use hyper::body::Body;
 use hyper::header;
 use hyper::Request;
+use std::convert::Infallible;
+use std::str::FromStr;
 use std::task::{Context, Poll};
 use tower::{Layer, Service};
 
@@ -20,6 +22,16 @@ impl UserAgentMetadata {
     }
 }
 
+impl FromStr for UserAgentMetadata {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self {
+            user_agent: s.into(),
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UserAgentExtractor<S> {
     inner: S,
@@ -31,7 +43,7 @@ impl<S> UserAgentExtractor<S> {
     }
 }
 
-impl<B, S> Service<Request<B>> for UserAgentExtractor<S>
+impl<S, B> Service<Request<B>> for UserAgentExtractor<S>
 where
     S: Service<Request<B>> + Clone,
     B: Body,
@@ -81,7 +93,7 @@ mod test {
             .header(header::USER_AGENT, String::from("Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0"))
             .body(Empty::<Bytes>::default())
             .unwrap();
-        
+
         let expected = UserAgentMetadata::new(String::from(
             "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
         ));

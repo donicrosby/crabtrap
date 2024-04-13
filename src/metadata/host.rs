@@ -2,6 +2,8 @@ use hyper::body::Body;
 use hyper::header;
 use hyper::Request;
 use hyper::Uri;
+use std::convert::Infallible;
+use std::str::FromStr;
 use std::task::{Context, Poll};
 use tower::{Layer, Service};
 
@@ -17,6 +19,14 @@ impl HostMetadata {
 
     pub fn host(&self) -> String {
         self.host.clone()
+    }
+}
+
+impl FromStr for HostMetadata {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self { host: s.into() })
     }
 }
 

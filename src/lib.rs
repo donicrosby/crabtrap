@@ -13,3 +13,6 @@ pub use self::server::Server as CrabTrapServer;
 pub(crate) use self::tarpit::{handle_tarpit_connection, Tarpit};
 pub use self::util::ContentType;
 pub(crate) use self::util::{extract_header, TarpitRecv, TarpitSender};
+
+#[cfg(test)]
+pub(crate) use self::metadata::{HostMetadata, RequestInfoMetadata, UserAgentMetadata};

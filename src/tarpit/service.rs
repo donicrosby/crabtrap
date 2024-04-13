@@ -2,7 +2,7 @@ use crate::{ClientMetadata, Error, TarpitConfig, TarpitConnection, TarpitRequest
 use futures::stream::{self, TryStreamExt};
 use http_body_util::StreamBody;
 use hyper::body::Body;
-use hyper::body::{Bytes, Frame, Incoming};
+use hyper::body::{Bytes, Frame};
 use hyper::header;
 use hyper::{Request, Response};
 use rand::distributions::Alphanumeric;
@@ -19,9 +19,12 @@ use tokio_stream::{self as tokio_stream, Stream, StreamExt};
 use tower::Service;
 use tracing::{debug, info, trace, warn};
 
-pub async fn handle_tarpit_connection(
-    req: Request<Incoming>,
-) -> Result<Response<StreamBody<impl Stream<Item = Result<Frame<Bytes>, Infallible>>>>, Error> {
+pub async fn handle_tarpit_connection<B>(
+    req: Request<B>,
+) -> Result<Response<StreamBody<impl Stream<Item = Result<Frame<Bytes>, Infallible>>>>, Error>
+where
+    B: Body,
+{
     let mut req = req;
     let payload = req
         .extensions_mut()
@@ -91,13 +94,18 @@ impl<S> Tarpit<S> {
     }
 
     fn num_connections_per_time_slice(&self, num_slices: u128, num_conns: usize) -> usize {
-        let div = num_conns / num_slices as usize;
-        if div > 0 {
-            div
-        } else if num_conns > 0 {
+        // duration is 0, just process all connections
+        if num_slices == 0 {
             num_conns
         } else {
-            0
+            let div = num_conns / num_slices as usize;
+            if div > 0 {
+                div
+            } else if num_conns > 0 {
+                num_conns
+            } else {
+                0
+            }   
         }
     }
 
@@ -126,6 +134,7 @@ impl<S> Tarpit<S> {
     }
 
     pub async fn process_connections(&self) {
+        info!("Tarpit Worker Thread Starting...");
         self.state
             .status
             .store(TarpitStatus::Running, Ordering::Release);
@@ -133,37 +142,42 @@ impl<S> Tarpit<S> {
         loop {
             time_slice.tick().await;
             trace!("Writer waking up...");
+            if self.state.status.load(Ordering::Acquire) == TarpitStatus::Stopped {
+                break;
+            }
             {
                 let mut conns = self.state.connections.lock().await;
-                let num_to_process =
-                    self.num_connections_per_time_slice(self.get_num_time_slices(), conns.len());
-                let to_process = conns.drain(..num_to_process);
-                let work_stream = stream::iter(to_process);
-                let mut processed_connections = work_stream
-                    .filter_map(|mut conn| {
-                        if conn.should_send_byte(self.config.duration_per_byte()) {
-                            let char: Bytes = rand::thread_rng()
-                                .clone()
-                                .sample_iter(&Alphanumeric)
-                                .take(1)
-                                .collect();
-                            if conn.send_byte(char).is_ok() {
-                                trace!("Byte sent successfully");
-                            } else {
-                                warn!("Byte failed to send");
+                if !conns.is_empty() {
+                    let num_to_process = self
+                        .num_connections_per_time_slice(self.get_num_time_slices(), conns.len());
+                    let to_process = conns.drain(..num_to_process);
+                    let work_stream = stream::iter(to_process);
+                    let mut processed_connections = work_stream
+                        .filter_map(|mut conn| {
+                            if conn.should_send_byte(self.config.duration_per_byte()) {
+                                let char: Bytes = rand::thread_rng()
+                                    .clone()
+                                    .sample_iter(&Alphanumeric)
+                                    .take(1)
+                                    .collect();
+                                if conn.send_byte(char).is_ok() {
+                                    trace!("Byte sent successfully");
+                                } else {
+                                    warn!("Byte failed to send");
+                                }
                             }
-                        }
-                        if !conn.should_abort() {
-                            Some(conn)
-                        } else {
-                            info!("Connection complete, cleaning up...");
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .await
-                    .into();
-                conns.append(&mut processed_connections);
+                            if !conn.should_abort() {
+                                Some(conn)
+                            } else {
+                                info!("Connection complete, cleaning up...");
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .await
+                        .into();
+                    conns.append(&mut processed_connections);
+                }
             }
         }
     }
@@ -217,5 +231,62 @@ where
             })
         });
         self_ret.inner.call(req)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{str::FromStr, time::Duration};
+
+    use super::*;
+    use crate::{ContentType, HostMetadata, RequestInfoMetadata, TarpitConfig, UserAgentMetadata};
+    use bytes::Bytes;
+    use http_body_util::Empty;
+    use hyper::{Method, Request};
+    use mime;
+    use tower::ServiceBuilder;
+    use tower_test::mock::Spawn;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_process_tarpit() {
+        let metadata = ClientMetadata::new(Some(HostMetadata::from_str("localhost").unwrap()), Some(UserAgentMetadata::from_str("Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0").unwrap()), RequestInfoMetadata::new(Method::GET, String::from("/"), None));
+        let request = Request::builder()
+            .extension(metadata)
+            .body(Empty::<Bytes>::default())
+            .unwrap();
+        let config = TarpitConfig::new(
+            10,
+            10,
+            1,
+            0,
+            ContentType::new(&mime::TEXT_PLAIN.to_string()).unwrap(),
+        );
+
+        let svc = ServiceBuilder::new().service_fn(handle_tarpit_connection);
+
+        let mut tarpit = Tarpit::new(svc, config);
+        let tarpit_worker = tarpit.clone();
+        let handle = tokio::task::spawn(async move { tarpit_worker.process_connections().await });
+
+        tarpit.add_handle(handle).await;
+
+        let mut svc = Spawn::new(tarpit);
+        while !svc.poll_ready().is_ready() {
+            tokio::time::sleep(Duration::from_nanos(1)).await   
+        }
+
+        let res = svc.call(request).await;
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        let (_, body) = res.into_parts();
+        let bytes: Vec<u8> = body
+            .fold(Vec::new(), |mut vec, byte| {
+                let raw_byte = byte.unwrap().into_data().unwrap();
+                let mut byte_vec = raw_byte.iter().cloned().collect::<Vec<u8>>();
+                vec.append(&mut byte_vec);
+                vec
+            })
+            .await;
+        assert_eq!(bytes.len(), 10);
     }
 }
