@@ -1,6 +1,9 @@
-use super::{Error, TarpitSender};
+use super::ClientMetadata;
+use crate::{ContentType, Error, TarpitRecv, TarpitSender};
 use getset::{CopyGetters, Getters, MutGetters, Setters};
 use hyper::body::Bytes;
+use std::sync::Arc;
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, Getters, Setters, CopyGetters)]
@@ -33,55 +36,6 @@ impl RequestMetadata {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ClientMetadata {
-    host: Option<String>,
-    user_agent_string: Option<String>,
-    location: String,
-    query: Option<String>,
-    method: String,
-}
-
-impl ClientMetadata {
-    pub fn new(
-        host: Option<String>,
-        user_agent_string: Option<String>,
-        method: String,
-        location: String,
-        query: Option<String>,
-    ) -> Self {
-        Self {
-            host,
-            user_agent_string,
-            location,
-            query,
-            method,
-        }
-    }
-
-    pub fn host(&self) -> String {
-        self.host.clone().unwrap_or(String::from("N/A"))
-    }
-
-    pub fn user_agent_string(&self) -> String {
-        self.user_agent_string
-            .clone()
-            .unwrap_or(String::from("N/A"))
-    }
-
-    pub fn location(&self) -> String {
-        self.location.clone()
-    }
-
-    pub fn query(&self) -> String {
-        self.query.clone().unwrap_or(String::from("None"))
-    }
-
-    pub fn method(&self) -> String {
-        self.method.clone()
-    }
-}
-
 #[derive(Debug, Clone, Getters, MutGetters)]
 pub struct ConnectionMetadata {
     #[getset(get = "pub", get_mut = "pub")]
@@ -99,6 +53,35 @@ impl ConnectionMetadata {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct TarpitRequest {
+    channel: Arc<Mutex<TarpitRecv>>,
+    content_type: ContentType,
+    payload_size: u64,
+}
+
+impl TarpitRequest {
+    pub fn new(channel: TarpitRecv, content_type: ContentType, payload_size: u64) -> Self {
+        Self {
+            channel: Arc::new(Mutex::new(channel)),
+            content_type,
+            payload_size,
+        }
+    }
+
+    pub fn content_type(&self) -> ContentType {
+        self.content_type.to_owned()
+    }
+
+    pub fn payload_size(&self) -> u64 {
+        self.payload_size
+    }
+
+    pub fn channel(&self) -> Arc<Mutex<TarpitRecv>> {
+        self.channel.clone()
+    }
+}
+
 #[derive(Debug, Clone, Getters)]
 pub struct TarpitConnection {
     #[getset(get = "pub")]
@@ -108,10 +91,11 @@ pub struct TarpitConnection {
 }
 
 impl TarpitConnection {
-    pub fn new(response_size: u64, client_metadata: ClientMetadata, channel: TarpitSender) -> Self {
+    pub fn new(response_size: u64, client_metadata: ClientMetadata) -> (Self, TarpitRecv) {
+        let (channel, recv) = mpsc::unbounded_channel();
         let request_metadata = RequestMetadata::new(response_size);
         let metadata = ConnectionMetadata::new(request_metadata, client_metadata);
-        Self { metadata, channel }
+        (Self { metadata, channel }, recv)
     }
 
     pub fn get_conn_metadata(&self) -> &ClientMetadata {

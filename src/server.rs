@@ -1,11 +1,13 @@
-use crate::{tarpit_impl, CrabTrapConfig, StreamingBytesWriter, TarPit, TarPitMetadataCollector};
-use hyper::service;
+use crate::{
+    handle_tarpit_connection, CrabTrapConfig, HostExtractorLayer, RequestInfoExtractorLayer,
+    Tarpit, TarpitMetadataCollectorLayer, UserAgentExtractorLayer,
+};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use hyper_util::service::TowerToHyperService;
 use std::io;
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
 use tower::ServiceBuilder;
 use tracing::{error, info};
 
@@ -24,46 +26,31 @@ impl Server {
         Self { config }
     }
 
-    pub async fn run<W: StreamingBytesWriter + Send + 'static>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), Error> {
+    pub async fn run(&self) -> Result<(), Error> {
         info!("Starting Crab Trap Tarpit...");
         let listener = TcpListener::bind(self.config.bind_addr()).await?;
         info!("Listening on: {}", self.config.bind_addr());
+        let connection_svc = ServiceBuilder::new().service_fn(handle_tarpit_connection);
+        let mut tarpit = Tarpit::new(connection_svc, self.config.tarpit_config().clone());
+        let tarpit_worker = tarpit.clone();
 
-        let (min_body, max_body, content_type) = (
-            self.config.tarpit_config().min_body_size(),
-            self.config.tarpit_config().max_body_size(),
-            self.config.tarpit_config().content_type(),
-        );
-        let (conn_send, conn_recv) = mpsc::unbounded_channel();
-
-        let _writer_handle =
-            tokio::task::spawn(async move { writer.process_connections(conn_recv).await });
+        let tarpit_handle =
+            tokio::task::spawn(async move { tarpit_worker.process_connections().await });
+        tarpit.add_handle(tarpit_handle).await;
 
         loop {
             let (stream, rmt_addr) = listener.accept().await?;
             info!("Received connection from: {}", rmt_addr);
-            let conn_send = conn_send.clone();
-            let content_type = content_type.clone();
             let io = TokioIo::new(stream);
+            let request_tarpit = tarpit.clone();
             tokio::task::spawn(async move {
-                let svc = service::service_fn(tarpit_impl);
                 let svc = ServiceBuilder::new()
-                    .layer_fn(|svc| {
-                        TarPit::new(
-                            min_body,
-                            max_body,
-                            content_type.clone(),
-                            conn_send.clone(),
-                            svc,
-                        )
-                    })
-                    .service(svc);
-                let svc = ServiceBuilder::new()
-                    .layer_fn(TarPitMetadataCollector::new)
-                    .service(svc);
+                    .layer(HostExtractorLayer)
+                    .layer(UserAgentExtractorLayer)
+                    .layer(RequestInfoExtractorLayer)
+                    .layer(TarpitMetadataCollectorLayer)
+                    .service(request_tarpit);
+                let svc = TowerToHyperService::new(svc);
                 if let Err(err) = auto::Builder::new(TokioExecutor::new())
                     .serve_connection(io, svc)
                     .await

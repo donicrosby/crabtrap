@@ -1,14 +1,15 @@
 mod config;
-mod http;
+mod metadata;
 mod server;
-mod writer;
+mod tarpit;
+mod util;
 
 pub use self::config::{Config as CrabTrapConfig, TarpitConfig};
-pub use self::http::ContentType;
-pub(crate) use self::http::{
-    tarpit_impl, ClientMetadata, ConnectionMetadata, TarPit,
-    TarPitMetadataCollector, TarpitConnection,
+pub(crate) use self::metadata::{
+    ClientMetadata, Error, HostExtractorLayer, RequestInfoExtractorLayer, TarpitConnection,
+    TarpitMetadataCollectorLayer, TarpitRequest, UserAgentExtractorLayer,
 };
 pub use self::server::Server as CrabTrapServer;
-pub(crate) use self::writer::TarpitConnSend;
-pub use self::writer::{StreamingBytesWriter, TarpitWriter};
+pub(crate) use self::tarpit::{handle_tarpit_connection, Tarpit};
+pub use self::util::ContentType;
+pub(crate) use self::util::{extract_header, Req, TarpitRecv, TarpitSender};
