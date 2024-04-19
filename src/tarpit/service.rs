@@ -1,20 +1,23 @@
 use crate::{ClientMetadata, Error, TarpitConfig, TarpitConnection, TarpitRequest};
 use futures::stream::{self, TryStreamExt};
 use http_body_util::StreamBody;
-use hyper::body::Body;
-use hyper::body::{Bytes, Frame};
-use hyper::header;
-use hyper::{Request, Response};
-use rand::distributions::Alphanumeric;
-use rand::prelude::*;
-use std::collections::VecDeque;
-use std::convert::Infallible;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use tokio::runtime::Handle;
-use tokio::task::{block_in_place, JoinHandle};
-use tokio::{sync::Mutex, time};
+use hyper::{
+    body::{Body, Bytes, Frame},
+    header, Request, Response,
+};
+use rand::{distributions::Alphanumeric, prelude::*};
+use std::{
+    collections::VecDeque,
+    convert::Infallible,
+    sync::{atomic::Ordering, Arc},
+    task::{Context, Poll},
+};
+use tokio::{
+    runtime::Handle,
+    sync::Mutex,
+    task::{block_in_place, JoinHandle},
+    time,
+};
 use tokio_stream::{self as tokio_stream, Stream, StreamExt};
 use tower::Service;
 use tracing::{debug, info, trace, warn};
@@ -105,7 +108,7 @@ impl<S> Tarpit<S> {
                 num_conns
             } else {
                 0
-            }   
+            }
         }
     }
 
@@ -272,7 +275,7 @@ mod test {
 
         let mut svc = Spawn::new(tarpit);
         while !svc.poll_ready().is_ready() {
-            tokio::time::sleep(Duration::from_nanos(1)).await   
+            tokio::time::sleep(Duration::from_nanos(1)).await
         }
 
         let res = svc.call(request).await;
