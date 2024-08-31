@@ -1,3 +1,3 @@
-pub use self::service::{handle_tarpit_connection, Tarpit};
+pub use self::service::Tarpit;
 
 mod service;

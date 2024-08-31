@@ -3,7 +3,6 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 mod collector;
-mod connection;
 mod host;
 mod request_info;
 mod user_agent;
@@ -14,8 +13,6 @@ pub(crate) use self::collector::{ClientMetadata, TarpitMetadataCollectorLayer};
 pub(crate) use self::host::{HostExtractorLayer, HostMetadata};
 pub(crate) use self::request_info::{RequestInfoExtractorLayer, RequestInfoMetadata};
 pub(crate) use self::user_agent::{UserAgentExtractorLayer, UserAgentMetadata};
-
-pub(crate) use self::connection::{TarpitConnection, TarpitRequest};
 
 #[derive(Debug, Error)]
 pub enum Error {
